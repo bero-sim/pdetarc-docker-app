@@ -1,0 +1,53 @@
+# https://github.com/bero-sim/pdetarc-docker-app/blob/main/.github/workflows/release-assets.yml
+name: Release Assets
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# env:
+#   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          # SHA256固定されたDockerfileからイメージをビルド
+          docker build -t pdetarc:latest .
+
+      - name: Export Docker image and Source
+        run: |
+          # 1. Dockerイメージを一時的な場所（一つ上の階層）に保存
+          docker save pdetarc:latest -o ../pdetarc_image_${{ github.ref_name }}.tar
+
+          # 2. ソースコードをパッキング（出力先を一つ上の階層にする）
+          # これにより、アーカイブ中にカレントディレクトリ内のファイルが増減するのを防ぎます
+          tar --sort=name --mtime='2000-01-01Z' \
+              --owner=0 --group=0 --numeric-owner \
+              --exclude='.git' \
+              -cvzf ../pdetarc-docker-app-source.tar.gz .
+
+          # 3. アップロード用にファイルをカレントディレクトリに戻す
+          mv ../pdetarc_image_${{ github.ref_name }}.tar .
+          mv ../pdetarc-docker-app-source.tar.gz .
+
+      - name: Create Release and Upload Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            pdetarc_image_${{ github.ref_name }}.tar
+            pdetarc-docker-app-source.tar.gz
+          generate_release_notes: true
+          # 必要に応じてドラフトやプリリリース設定を調整してください
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
