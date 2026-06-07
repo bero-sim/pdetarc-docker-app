@@ -1,0 +1,94 @@
+# https://github.com/bero-sim/pdetarc-docker-app/blob/main/.github/workflows/release-assets.yml
+name: Release Assets
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  # --- ジョブ1: Windows環境でEXEをビルド ---
+  build-exe:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install pyinstaller
+
+      - name: Build Launcher EXE
+        run: |
+          pyinstaller --onefile --icon=PDETARC_MAIN.ico --name "pdetarc" pdetarc-launcher.py
+
+      - name: Upload EXE Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: dist/pdetarc.exe
+
+  # --- ジョブ2: Linux環境でDocker/Sourceのパッキングとリリース ---
+  build-and-release:
+    needs: build-exe
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download EXE Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-exe
+          path: . # カレントディレクトリに pdetarc.exe が配置される
+
+      - name: Build Docker image
+        run: |
+          docker build -t pdetarc:latest .
+
+      - name: Export Docker image, Source and Zip EXE
+        run: |
+          # 1. Dockerイメージを一時的な場所（一つ上の階層）に保存
+          docker save pdetarc:latest -o ../pdetarc_image_${{ github.ref_name }}.tar
+
+          # 2. 配布用パッケージの作成
+          mkdir dist_package
+          
+          # 【重要】pdetarc.exe はルート直下にあるので ./pdetarc.exe をコピー
+          cp ./pdetarc.exe ./dist_package/
+          cp ./LICENSE_THIRD_PARTY.txt ./dist_package/
+
+          # Zip圧縮：dist_package ディレクトリの中身を zip 化する
+          # 第3引数の base_dir に 'dist_package' を指定し、カレントディレクトリから実行
+          python3 -c "import shutil; shutil.make_archive('../pdetarc-windows', 'zip', 'dist_package')"
+
+          # 3. ソースコードをパッキング
+          tar --sort=name --mtime='2000-01-01Z' \
+              --owner=0 --group=0 --numeric-owner \
+              --exclude='.git' \
+              --exclude='dist_package' \
+              -cvzf ../pdetarc-docker-app-source.tar.gz .
+
+          # 4. アップロード用にファイルをカレントディレクトリに戻す
+          mv ../pdetarc_image_${{ github.ref_name }}.tar .
+          mv ../pdetarc-windows.zip .
+          mv ../pdetarc-docker-app-source.tar.gz .
+
+      - name: Create Release and Upload Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            pdetarc_image_${{ github.ref_name }}.tar
+            pdetarc-docker-app-source.tar.gz
+            pdetarc-windows.zip
+          generate_release_notes: true
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
